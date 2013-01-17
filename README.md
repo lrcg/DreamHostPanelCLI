@@ -100,7 +100,7 @@ Inputs for forms can be found with `getInputs()` function, or the
 linked pages can be requested with `doGet()` and parsed for forms as
 well. Labels for the above need to be added but for the most part they
 are descriptive (_i.e._ Destroy IP, Add IP, Destroy Domain, Restore
-Domain, etc). Some forms will need manual labels (_i.e. `form0`, `a`,
+Domain, etc). Some forms will need manual labels (_i.e._ `form0`, `a`,
 etc) but a descriptive label is usually an `<h1>` sibling element just
 above the form which is easy to extract from the document tree in
 `$currentPage`.
