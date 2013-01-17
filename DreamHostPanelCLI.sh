@@ -73,12 +73,13 @@ sub initBrowser {
 }
 
 # Dump vars and exit (for development)
+# Some hashes don't seem to work unless passed as {%hash}
 # @param mixed var to dump
 # @param bool  optional switch to continue processing rather than exit
 sub d {
-    my $finished = 1;
-    if ( $_[1] ) { $finished = $_[1]; }
-    print Dumper( $_[0] );
+    my ( $var, $finished ) = @_;
+    $finished = 1 unless defined $finished;
+    print Dumper $var ;
     if ( $finished ) {
         exit;
     }
@@ -299,19 +300,18 @@ sub loadOptions {
     say 'loading options…';
     my ( @links ) = &findElements( 'a', (href => qr/\?tree=[^=&]+&$/ ));
     foreach my $link (@links) {
-        my $href = $link->attr( 'href' );
         # Extract category from link
         # ex: https://panel.dreamhost.com/index.cgi?tree=domain.ftp&
-        ( my $category_sub = $href )         =~ s/^.*tree=(.*)&/$1/g;
-        ( my $category     = $category_sub ) =~ s/\..*$//;
-        ( my $sub_category = $category_sub ) =~ s/^[^.]+\.//;
-        &d($category, 0);
-        &d($sub_category, 0);
-        $task_categories{$category} = {} unless $task_categories{$category};
+        ( my $href = $link->attr( 'href' ) )  =~ s/^.*tree=(.*)&/$1/g;
+        ( my $category, my $sub_category ) = split /\./, $href;
+
+        # $task_categories{$category} = '' unless $task_categories{$category};
 
         $task_categories{$category}{$sub_category} = $href;
+        # d( %task_categories, 0 );
     }
-    d( %task_categories );
+
+    d( {%task_categories} );
     # %categories =  map { $_->attr('href') =~ //r =>  } @links;
     exit;
     # d( @links2 );
