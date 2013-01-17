@@ -96,7 +96,7 @@ Currently looks like this:
 The `$VARxx` lines are a dump of the froms and links found from the
 _manage domains_ page.
 
-Inputs for forms can be found with `getInputs()` function, or the
+Inputs for forms can be found with `findInputs()` function, or the
 linked pages can be requested with `doGet()` and parsed for forms as
 well. Labels for the above need to be added but for the most part they
 are descriptive (_i.e._ Destroy IP, Add IP, Destroy Domain, Restore
