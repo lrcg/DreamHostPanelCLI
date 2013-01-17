@@ -331,7 +331,7 @@ sub chooseTask {
 
     my ( %forms ) = &findForms();
     my ( @links ) = &findElements( 'a', ( href => qr/&next_step=/ ) );
-print Dumper (keys %forms, map { my $link = shift; $link->attr( 'href' ) } @links );
+print Dumper (keys %forms, map { $_->attr( 'href' ) } @links );
     d( '' );
 }
 
