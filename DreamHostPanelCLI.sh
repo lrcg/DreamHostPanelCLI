@@ -136,9 +136,9 @@ sub findForms {
     my ( @forms ) = &findElements( 'form' );
     my %forms;
     my $form_name;
-
+    my $i = 0;
     foreach my $form ( @forms ) {
-        $form_name = $form->attr( 'name' );
+        $form_name = $form->attr( 'name' ) || $form->attr( 'id' ) || 'form' . $i++;
         if ( $form_name ) {
             $forms{$form_name} = $form;
         }
@@ -267,6 +267,7 @@ sub loadOptionsJSON {
             }
         } 
         # Extract tasks and related URLs related to user's domains
+=pod Don't bother getting these commands; they are too limited
         if ( $domain 
             && $decoded_json[$i]{text} =~ /
                 (manage|redirect)       # ignore synonyms add, edit, create
@@ -293,6 +294,7 @@ sub loadOptionsJSON {
                 };
             }
         }
+=cut
     }
 }
 
@@ -310,12 +312,27 @@ sub loadOptions {
         $task_categories{$category}{$sub_category} = $href;
         # d( %task_categories, 0 );
     }
+}
 
-    d( {%task_categories} );
-    # %categories =  map { $_->attr('href') =~ //r =>  } @links;
-    exit;
-    # d( @links2 );
+sub chooseTask {
+    &displayOptions(keys %task_categories);
+    my $choice = &getUserInput( 'Which category?');
+    my $category = &selectOption($choice);
 
+
+    &displayOptions(keys $task_categories{$category});
+    $choice = &getUserInput( 'Which task?');
+    my $task = &selectOption($choice);
+    my $url =  $baseURL . 'index.cgi?tree=' . $task_categories{$category}{$task} . '&' ;
+    d( $url, 0 );
+
+    my $response = &doGet( $url );
+    &setCurrentPage( $response->content );
+
+    my ( %forms ) = &findForms();
+    my ( @links ) = &findElements( 'a', ( href => qr/&next_step=/ ) );
+print Dumper (keys %forms, map { my $link = shift; $link->attr( 'href' ) } @links );
+    d( '' );
 }
 
 # Display tasks available for $currentPage, read selection, display
@@ -381,6 +398,7 @@ sub confirmExit{
 sub main {
     &logIn();
     &loadOptions();
+    &chooseTask();
     &doTask();
     &confirmExit();
 }
