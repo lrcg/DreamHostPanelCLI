@@ -10,6 +10,7 @@
 
 use strict;
 use warnings;
+use v5.10;
 
 # LWP - The World-Wide Web library for Perl
 # used for GETting and POSTing
@@ -52,6 +53,16 @@ my %domains;
 # Hash of possible tasks to perform
 my %tasks;
 
+my %task_categories;
+
+# Hash of task links extracted from main Panel 
+my %task_links;
+
+# Hash of forms available on $currentPage for completion
+my %forms;
+
+# array of sorted options to display for user selection
+my @options;
 
 # Setup browser
 # Returns nothing
@@ -61,11 +72,14 @@ sub initBrowser {
     $ua->cookie_jar( $cookies );
 }
 
-# Dump vars, for development
+# Dump vars and exit (for development)
+# Some hashes don't seem to work unless passed as {%hash}
+# @param mixed var to dump
+# @param bool  optional switch to continue processing rather than exit
 sub d {
-    my $finished = 0;
-    if ( $_[1] ) { $finished = $_[1]; }
-    print Dumper( $_[0] );
+    my ( $var, $finished ) = @_;
+    $finished = 1 unless defined $finished;
+    print Dumper $var ;
     if ( $finished ) {
         exit;
     }
@@ -122,9 +136,9 @@ sub findForms {
     my ( @forms ) = &findElements( 'form' );
     my %forms;
     my $form_name;
-
+    my $i = 0;
     foreach my $form ( @forms ) {
-        $form_name = $form->attr( 'name' );
+        $form_name = $form->attr( 'name' ) || $form->attr( 'id' ) || 'form' . $i++;
         if ( $form_name ) {
             $forms{$form_name} = $form;
         }
@@ -147,6 +161,17 @@ sub findInputs {
         }
     }
     return ( %inputs );
+}
+
+sub displayOptions {
+    @options = sort @_;
+    my $i = 1;
+    map { say $i++ . ": $_" } @options;
+}
+
+sub selectOption {
+    my $selection = shift;
+    return $options[$selection - 1];
 }
 
 # Displays $prompt and collects user input
@@ -193,6 +218,9 @@ sub logIn {
             $inputs{$input} = &getUserInput( $input );
         }
     }
+
+    say 'Attempting to log in…';
+
     # Set panel as $currentPage
     $response = &doPost( $forms{$loginFormName}->attr('action' ), %inputs);
     &setCurrentPage( $response->content );
@@ -210,7 +238,7 @@ sub logIn {
 # Get list of domains, domain SIDs, commands, and command URLs from
 # `fastsearch' JS file used by the search bar (easier than parsing the
 # DOM)
-sub loadOptions {
+sub loadOptionsJSON {
     my ( $fastsearch_script ) = &findElements( 'script', (src => qr/^fastsearch/ ));
     my $response = &doGet( $baseURL . $fastsearch_script->attr('src' ));
     ( my $json_data = $response->content ) =~ s/^[^\[]+//;
@@ -239,6 +267,7 @@ sub loadOptions {
             }
         } 
         # Extract tasks and related URLs related to user's domains
+=pod Don't bother getting these commands; they are too limited
         if ( $domain 
             && $decoded_json[$i]{text} =~ /
                 (manage|redirect)       # ignore synonyms add, edit, create
@@ -265,7 +294,45 @@ sub loadOptions {
                 };
             }
         }
+=cut
     }
+}
+
+sub loadOptions {
+    say 'loading options…';
+    my ( @links ) = &findElements( 'a', (href => qr/\?tree=[^=&]+&$/ ));
+    foreach my $link (@links) {
+        # Extract category from link
+        # ex: https://panel.dreamhost.com/index.cgi?tree=domain.ftp&
+        ( my $href = $link->attr( 'href' ) )  =~ s/^.*tree=(.*)&/$1/g;
+        ( my $category, my $sub_category ) = split /\./, $href;
+
+        # $task_categories{$category} = '' unless $task_categories{$category};
+
+        $task_categories{$category}{$sub_category} = $href;
+        # d( %task_categories, 0 );
+    }
+}
+
+sub chooseTask {
+    &displayOptions(keys %task_categories);
+    my $choice = &getUserInput( 'Which category?');
+    my $category = &selectOption($choice);
+
+
+    &displayOptions(keys $task_categories{$category});
+    $choice = &getUserInput( 'Which task?');
+    my $task = &selectOption($choice);
+    my $url =  $baseURL . 'index.cgi?tree=' . $task_categories{$category}{$task} . '&' ;
+    d( $url, 0 );
+
+    my $response = &doGet( $url );
+    &setCurrentPage( $response->content );
+
+    my ( %forms ) = &findForms();
+    my ( @links ) = &findElements( 'a', ( href => qr/&next_step=/ ) );
+print Dumper (keys %forms, map { $_->attr( 'href' ) } @links );
+    d( '' );
 }
 
 # Display tasks available for $currentPage, read selection, display
@@ -305,8 +372,10 @@ sub doTask {
     }
     # Add domain or dsid to url as appropriate Domain and DSID were
     # stripped off when finding domains in loadOptions()
-    $task_url .= $selected_domain                   if $task_url =~ /domain=$/;
-    $task_url .= $domains{$selected_domain}{'dsid'} if $task_url =~ /dsid=$/;
+    $task_url .= $selected_domain                   if $task_url =~ /&domain=$/;
+    $task_url .= $domains{$selected_domain}{'dsid'} if $task_url =~ /&dsid=$/;
+
+    d($task_url, 0);
 
     # GET page for desired task and…
     $response = &doGet( $baseURL . 'index.cgi?' . $task_url );
@@ -329,6 +398,7 @@ sub confirmExit{
 sub main {
     &logIn();
     &loadOptions();
+    &chooseTask();
     &doTask();
     &confirmExit();
 }
