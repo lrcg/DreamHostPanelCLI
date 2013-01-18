@@ -144,14 +144,23 @@ sub findElements {
 
 # Find all available forms in $currentPage, basically a specific form
 # of findElements()
+
+#  Forms for actions seem to always have the class `fancyform` so this
+# can be used as a filter
 sub findForms {
-    my ( @forms ) = &findElements( 'form' );
+    my $fancyforms_only = shift || 0;
+
+    my %attrs;
+    %attrs = ( class => 'fancyform' ) if $fancyforms_only;
+
+    my ( @forms ) = &findElements( 'form', %attrs );
     my %forms;
     my $form_name;
     my $i = 0;
     foreach my $form ( @forms ) {
         $form_name = $form->attr( 'name' ) || $form->attr( 'id' ) || 'form' . $i++;
         if ( $form_name ) {
+            # say $form_name;
             $forms{$form_name} = $form;
         }
     }
@@ -159,17 +168,27 @@ sub findForms {
 }
 
 # Finds all inputs of a $form object from findForms(), technically a
-# DOM fragment
+# DOM fragment returns a hash of (name => value) attributes for each
+# input @todo still need to find other forms of input such as
+# `<select>` and `<textarea>` and `<button>`
 sub findInputs {
     my ( $form ) = @_;
-    my %inputs;
-
+    # %inputs = hash of name => values extracted from @inputs
+    my %inputs = ( hidden => {}, visible => {} );
+    # @inputs = array of HTML::Elements
     my @inputs = $form->find_by_tag_name( 'input' );
+    my $i = 0;
     foreach my $input ( @inputs ) {
-        my $name  = $input->attr( 'name' );
+        # ignore submit buttons
+        my $type = $input->attr( 'type' ) || 0;
+        next if $type eq 'submit';
+        my $name  = $input->attr( 'name' ) || 'name' . $i++;
         my $value = $input->attr( 'value' );
-        if ( defined $name ) { 
-            $inputs{$name} = $value;
+
+        if ( $type eq 'hidden' ) { 
+            $inputs{'hidden'}{$name} = $value;
+        } else {
+            $inputs{'visible'}{$name} = $value;
         }
     }
     return ( %inputs );
@@ -190,15 +209,18 @@ sub selectOption {
 # Promts with /password/ will not echo user input
 # No echo behaviour can also be enabled by setting $private
 sub getUserInput {
-    my $prompt  = shift;
-    my $private = shift || 0;
+    my ( %prompt_data, $private ) = @_;
+    my $current_value  = $prompt_data{'value'};
+    my $prompt         = $prompt_data{'prompt'} || '';
+    # my $private        = shift || 0;
+    $private = 0 unless defined $private;
     
     if ( $prompt =~ /password/i || $private ) { 
         ReadMode( 'noecho' ); 
     } else { 
         ReadMode( 'normal' ); 
     }
-
+    say "Enter to accept current value: ($current_value)" if $current_value;
     print "$prompt: ";
 
     my $input = <STDIN>;
@@ -206,7 +228,43 @@ sub getUserInput {
     ReadMode( 'normal' );
     print "\n";
     chomp $input;
-    return $input;
+    # Return existing value if enter. There are probably other
+    # scenarios to cover.
+    if ( !$input && $current_value ) {
+        return $current_value;
+    } else {
+        return $input;
+    }
+}
+
+# Merge hidden and visible hashes into a one-dimensional hash to send
+# as POST data
+sub prepareInputsForPost {
+    my ( %inputs ) = @_;
+    my %preparedInputs;
+    foreach my $type ( keys %inputs ) {
+        foreach my $input ( keys $inputs{$type} ) {
+            $preparedInputs{$input} = $inputs{$type}{$input};
+        }
+    }
+    return ( %preparedInputs );
+}
+
+# Get input from user for visible inputs
+sub getInputValues {
+    my ( %inputs ) = @_;
+    # Prompt for credentials
+    foreach my $input ( keys $inputs{'visible'} ) {
+        # if ( $inputs{$input} eq "" ) {
+            $inputs{'visible'}{$input} = &getUserInput(
+                ( 
+                  prompt => $input,
+                  value  => $inputs{'visible'}{$input}
+                )
+             );
+        # }
+    }
+    return ( %inputs );
 }
 
 # Gets cookie required for login and submits credentials of not
@@ -224,21 +282,20 @@ sub logIn {
     my ( %forms )  = &findForms();
 
     my ( %inputs ) = &findInputs( $forms{$loginFormName} );
-    # Prompt for credentials
-    foreach my $input ( keys %inputs ) {
-        if ( $inputs{$input} eq "" ) {
-            $inputs{$input} = &getUserInput( $input );
-        }
-    }
+
+    ( %inputs ) = getInputValues( %inputs );
 
     say 'Attempting to log in…';
 
+    $response = &doPost( 
+        $forms{$loginFormName}->attr('action' ), 
+        &prepareInputsForPost( %inputs ) 
+        );
     # Set panel as $currentPage
-    $response = &doPost( $forms{$loginFormName}->attr('action' ), %inputs);
     &setCurrentPage( $response->content );
 
     # Check for login failure indicated by <div class='caution'>
-    my ( @divs ) = &findElements( 'div', (class => 'caution' ));
+    my ( @divs ) = &findElements( 'div', ( class => 'caution' ) );
     if ( @divs ) {
         print "Login failed\n";
         exit;
@@ -327,12 +384,12 @@ sub loadOptions {
 
 sub chooseTask {
     &displayOptions(keys %task_categories);
-    my $choice = &getUserInput( 'Which category?');
+    my $choice = &getUserInput( ( prompt => 'Which category?', value => '' ) );
     my $category = &selectOption($choice);
 
 
     &displayOptions(keys $task_categories{$category});
-    $choice = &getUserInput( 'Which task?');
+    $choice = &getUserInput( ( prompt => 'Which task?', value => '' ) );
     my $task = &selectOption($choice);
     # Update globals
     $currentTaskTree = $task_categories{$category}{$task};
@@ -351,12 +408,12 @@ sub chooseAction {
     my %links = map { $_->content_list() => $_->attr( 'href' ) } @links;
 
     &displayOptions(keys %links );
-    my $choice = &getUserInput( 'Which action?' );
+    my $choice = &getUserInput( ( prompt => 'Which action?', value => '' ) );
     my $action = &selectOption($choice);
 
     # Set globals
     $currentActionText = $choice;
-    $currentActionUrl  = $links{$action};
+    $currentActionUrl  =  $baseURL . 'index.cgi' . $links{$action};
 
     # Fetch page and set
     say 'loading form…';
@@ -367,24 +424,32 @@ sub chooseAction {
 
 sub getActionForm {
 
-    my ( %forms )  = &findForms();
+    my ( %forms )  = &findForms(1);
     # Most forms don't have a name or id, so `findForms()` gives it
     # the name `form`+ incrementor. Need to make sure this works for
     # all pages rather than hardcoding and hoping though
+    # say 'keys %forms';
+    # say keys %forms;
+    # say 'keys $forms{\'form0\'}';
+    # say keys $forms{'form0'};
+
     my ( %inputs ) = &findInputs( $forms{'form0'} );
+
+    # print Dumper keys %inputs;
+    # exit;
+
     foreach my $input ( keys %inputs ) {
-        if ( $input->attr( 'type' ) ne 'hidden' && $inputs{$input} eq '' ) {
+        if ( $inputs{$input} eq '' ) {
             $inputs{$input} = &getUserInput( $input );
-        } else {
-            $inputs{$input} = $input->attr( 'value
+        }
     }
+    d( {%inputs} );
 
-
-    say $form->content_list();
-    print Dumper ($form->content_list());
+    # say $form->content_list();
+    # print Dumper ($form->content_list());
     exit;
     d('');
-    my ( %inputs ) = &findInputs( $forms{'form0'} );
+    # my ( %inputs ) = &findInputs( $forms{'form0'} );
 
 }
 
