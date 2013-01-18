@@ -59,7 +59,7 @@ Currently looks like this:
     loading actions…
     1: close account/end all hosting
     2: rename account
-    Which action?: 
+    Which action?: 2
     
     loading form…
     Enter to accept current value: (My Account)
