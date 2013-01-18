@@ -11,6 +11,7 @@
 use strict;
 use warnings;
 use v5.10;
+use feature 'say';
 
 # LWP - The World-Wide Web library for Perl
 # used for GETting and POSTing
@@ -25,7 +26,10 @@ my $tree = HTML::TreeBuilder->new();
 
 # Cookies storage abject
 use HTTP::Cookies;
-my $cookies = HTTP::Cookies->new();
+my $cookie_jar = HTTP::Cookies->new(
+    file     => "$ENV{'HOME'}/.dhp_cli_cookies.dat",
+    autosave => 1
+);
 
 # Pure Perl JSON to deal with non-standard JSON
 use JSON::PP; 
@@ -81,7 +85,7 @@ my @options;
 sub initBrowser {
     $ua = LWP::UserAgent->new;
     $ua->agent( "DHAutomater/0.1 " );
-    $ua->cookie_jar( $cookies );
+    $ua->cookie_jar( $cookie_jar );
 }
 
 # Dump vars and exit (for development)
@@ -246,7 +250,7 @@ sub prepareInputsForPost {
     my ( %inputs ) = @_;
     my %preparedInputs;
     foreach my $type ( keys %inputs ) {
-        foreach my $input ( keys $inputs{$type} ) {
+        foreach my $input ( keys %{$inputs{$type}} ) {
             $preparedInputs{$input} = $inputs{$type}{$input};
         }
     }
@@ -257,7 +261,7 @@ sub prepareInputsForPost {
 sub getInputValues {
     my ( %inputs ) = @_;
     # Prompt for credentials
-    foreach my $input ( keys $inputs{'visible'} ) {
+    foreach my $input ( keys %{$inputs{'visible'}} ) {
         $inputs{'visible'}{$input} = &getUserInput(
             ( 
               prompt => $input,
@@ -274,7 +278,8 @@ sub logIn {
     return if $LoggedIn;
     # Login form name
     my $loginFormName = 'a';
-    &initBrowser();
+
+    say 'Getting login form…';
 
     # Get login page and set cookie (handled by $ua automatically)
     my $response = &doGet( $baseURL . 'index.cgi' );
@@ -294,6 +299,10 @@ sub logIn {
         );
     # Set panel as $currentPage
     &setCurrentPage( $response->content );
+    # Must manually set the first cookie if the file doesn't exist
+    # apparently
+    $cookie_jar->extract_cookies( $response );
+    $cookie_jar->save;
 
     # Check for login failure indicated by <div class='caution'>
     my ( @divs ) = &findElements( 'div', ( class => 'caution' ) );
@@ -388,7 +397,7 @@ sub chooseTask {
     my $category = &selectOption($choice);
 
 
-    &displayOptions(keys $task_categories{$category});
+    &displayOptions(keys %{$task_categories{$category}});
     $choice = &getUserInput( ( prompt => 'Which task?', value => '' ) );
     my $task = &selectOption($choice);
     # Update globals
@@ -525,7 +534,23 @@ sub confirmExit{
     main();
 }
 
+# See if user is logged in by checking the cookie jar and, if a cookie
+# is found, which is not often around me, test the validity by
+# requesting a page and checking the `<title>` for _Panel_.
+sub checkCookie() {
+    return unless $cookie_jar->as_string;
+    say 'Checking login status…';
+    my $response = &doGet( $baseURL . 'index.cgi' );
+    &setCurrentPage( $response->content );
+    my ( @titles ) = &findElements( 'title' );
+
+    $titles[0]->as_text() =~ /Panel/ && ($LoggedIn = 1);
+
+}
+
 sub main {
+    &initBrowser();
+    &checkCookie();
     &logIn();
     &loadOptions();
     &chooseTask();
