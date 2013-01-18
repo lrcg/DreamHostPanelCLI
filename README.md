@@ -14,6 +14,12 @@ Copyright © 2013 Myq Larson
 http://copyfree.org/licenses/gnu_all_permissive/license.txt
 
 
+Warranty
+--------
+
+Ha! You're joking right? If you can't take responsibility for your own
+self, then treat this script as 100% broken. Do not use!
+
 Road map
 --------
 
