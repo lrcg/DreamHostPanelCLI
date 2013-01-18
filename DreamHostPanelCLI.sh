@@ -161,7 +161,7 @@ sub findForms {
     my $i = 0;
     foreach my $form ( @forms ) {
         $form_name = $form->attr( 'name' ) || $form->attr( 'id' ) || 'form' . $i++;
-say $form_name;
+
         if ( $form_name ) {
             # say $form_name;
             $forms{$form_name} = $form;
@@ -258,14 +258,12 @@ sub getInputValues {
     my ( %inputs ) = @_;
     # Prompt for credentials
     foreach my $input ( keys $inputs{'visible'} ) {
-        # if ( $inputs{$input} eq "" ) {
-            $inputs{'visible'}{$input} = &getUserInput(
-                ( 
-                  prompt => $input,
-                  value  => $inputs{'visible'}{$input}
-                )
-             );
-        # }
+        $inputs{'visible'}{$input} = &getUserInput(
+            ( 
+              prompt => $input,
+              value  => $inputs{'visible'}{$input}
+            )
+        );
     }
     return ( %inputs );
 }
@@ -381,7 +379,6 @@ sub loadOptions {
         # $task_categories{$category} = '' unless $task_categories{$category};
 
         $task_categories{$category}{$sub_category} = $href;
-        # d( %task_categories, 0 );
     }
 }
 
@@ -403,7 +400,11 @@ sub chooseTask {
     &setCurrentPage( $response->content );
 }
 
-# There are some idiosyncracies in tasks and forms, so may need some distinct functions. For example, the _domains_ category generally require selection of a domain to perform the action on, which also means a queue could be established for bulk editing. But other categories, such as _billing_ or _storage_, there's no need.
+# There are some idiosyncracies in tasks and forms, so may need some
+# distinct functions. For example, the _domains_ category generally
+# require selection of a domain to perform the action on, which also
+# means a queue could be established for bulk editing. But other
+# categories, such as _billing_ or _storage_, there's no need.
 sub chooseAction {
     # only work with links for now. Easier!
     # my ( %forms ) = &findForms();
@@ -426,37 +427,36 @@ sub chooseAction {
 
 }
 
+# Currently this function does more than just get a form for an
+# action. It gets input and submits it as well. Should focus on
+# refactoring this to deal with all basic forms.
 sub getActionForm {
 
     my ( %forms )  = &findForms(1);
     # Most forms don't have a name or id, so `findForms()` gives it
     # the name `form`+ incrementor. Need to make sure this works for
     # all pages rather than hardcoding and hoping though
-    # say 'keys %forms';
-    # say keys %forms;
-    # say 'keys $forms{\'form0\'}';
-    # say keys $forms{'form0'};
-
-    my ( %inputs ) = &findInputs( $forms{'form0'} );
+    my ( %inputs ) = &findInputs( $forms{'form1'} );
 
     ( %inputs ) = getInputValues( %inputs );
 
-    # print Dumper keys %inputs;
-    # exit;
+    say 'submitting form…';
 
-    # foreach my $input ( keys %inputs ) {
-    #     if ( $inputs{$input} eq '' ) {
-    #         $inputs{$input} = &getUserInput( $input );
-    #     }
-    # }
-    d( {%inputs} );
+    my $response = &doPost( 
+        $baseURL . 'index.cgi' . $forms{'form1'}->attr( 'action' ), 
+        &prepareInputsForPost( %inputs ) 
+        );
+    # Set panel as $currentPage
+    &setCurrentPage( $response->content );
 
-    # say $form->content_list();
-    # print Dumper ($form->content_list());
-    exit;
-    d('');
-    # my ( %inputs ) = &findInputs( $forms{'form0'} );
+    my ( @divs ) = &findElements( 'div', ( class => 'successbox_body' ) );
+    if (!@divs) {
+        say 'Action failed!';
+    } else {
+        say $divs[0]->as_text();
+    }
 
+    &confirmExit();
 }
 
 # This function has largely been abandoned but has some ideas which
@@ -520,7 +520,7 @@ sub doTask {
 # A way out.
 sub confirmExit{
     my $reallyExit = 0;
-    my $response   = &getUserInput( 'Finished? (y/n)' );
+    my $response   = &getUserInput( ( prompt => 'Finished? (y/n)', value => 'y' ) );
     exit unless $response =~ /n/i;
     main();
 }
@@ -531,7 +531,7 @@ sub main {
     &chooseTask();
     &chooseAction();
     &getActionForm();
-    &doTask();
+    # &doTask();
     &confirmExit();
 }
 
