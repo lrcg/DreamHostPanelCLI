@@ -71,7 +71,7 @@ my %task_categories;
 my %task_links;
 
 # Hash of forms available on $currentPage for completion
-my %forms;
+# my %forms;
 
 # array of sorted options to display for user selection
 my @options;
@@ -147,6 +147,8 @@ sub findElements {
 
 #  Forms for actions seem to always have the class `fancyform` so this
 # can be used as a filter
+
+# @todo why are forms from previous pages staying in memory???
 sub findForms {
     my $fancyforms_only = shift || 0;
 
@@ -159,6 +161,7 @@ sub findForms {
     my $i = 0;
     foreach my $form ( @forms ) {
         $form_name = $form->attr( 'name' ) || $form->attr( 'id' ) || 'form' . $i++;
+say $form_name;
         if ( $form_name ) {
             # say $form_name;
             $forms{$form_name} = $form;
@@ -418,6 +421,7 @@ sub chooseAction {
     # Fetch page and set
     say 'loading form…';
     my $response = &doGet( $currentActionUrl );
+
     &setCurrentPage( $response->content );
 
 }
@@ -435,14 +439,16 @@ sub getActionForm {
 
     my ( %inputs ) = &findInputs( $forms{'form0'} );
 
+    ( %inputs ) = getInputValues( %inputs );
+
     # print Dumper keys %inputs;
     # exit;
 
-    foreach my $input ( keys %inputs ) {
-        if ( $inputs{$input} eq '' ) {
-            $inputs{$input} = &getUserInput( $input );
-        }
-    }
+    # foreach my $input ( keys %inputs ) {
+    #     if ( $inputs{$input} eq '' ) {
+    #         $inputs{$input} = &getUserInput( $input );
+    #     }
+    # }
     d( {%inputs} );
 
     # say $form->content_list();
