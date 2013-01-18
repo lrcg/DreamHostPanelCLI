@@ -47,12 +47,24 @@ my $LoggedIn = 0;
 # parsed DOM
 my $currentPage;
 
+# Selected task value from %task_categories
+my $currentTaskTree;
+# URL to request page for current task
+my $currentTaskUrl;
+
+my $currentActionText;
+my $currentActionUrl;
+
 # Hash of domains known to DH panel
 my %domains;
 
 # Hash of possible tasks to perform
 my %tasks;
 
+# Hash of available tasks derived from links in left column as
+# category->subcategory = tree parameter of URL
+# ex: https://panel.dreamhost.com/index.cgi?tree=billing.invoice& 
+# becomes: $task_categories{'billing'}{'invoice'} = 'billing.invoice'
 my %task_categories;
 
 # Hash of task links extracted from main Panel 
@@ -302,8 +314,7 @@ sub loadOptions {
     say 'loading options…';
     my ( @links ) = &findElements( 'a', (href => qr/\?tree=[^=&]+&$/ ));
     foreach my $link (@links) {
-        # Extract category from link
-        # ex: https://panel.dreamhost.com/index.cgi?tree=domain.ftp&
+        # Extract category & task from link, see %task_categories comment
         ( my $href = $link->attr( 'href' ) )  =~ s/^.*tree=(.*)&/$1/g;
         ( my $category, my $sub_category ) = split /\./, $href;
 
@@ -323,21 +334,66 @@ sub chooseTask {
     &displayOptions(keys $task_categories{$category});
     $choice = &getUserInput( 'Which task?');
     my $task = &selectOption($choice);
-    my $url =  $baseURL . 'index.cgi?tree=' . $task_categories{$category}{$task} . '&' ;
-    d( $url, 0 );
-
-    my $response = &doGet( $url );
+    # Update globals
+    $currentTaskTree = $task_categories{$category}{$task};
+    my $currentTaskUrl =  $baseURL . 'index.cgi?tree=' . $currentTaskTree . '&' ;
+    # Fetch page and set
+    say 'loading actions…';
+    my $response = &doGet( $currentTaskUrl );
     &setCurrentPage( $response->content );
-
-    my ( %forms ) = &findForms();
-    my ( @links ) = &findElements( 'a', ( href => qr/&next_step=/ ) );
-print Dumper (keys %forms, map { $_->attr( 'href' ) } @links );
-    d( '' );
 }
 
-# Display tasks available for $currentPage, read selection, display
-# available %domains to perform tasks on, read selection
-# @todo refactor this or use CLI::Framework instead. Too procedural here.
+# There are some idiosyncracies in tasks and forms, so may need some distinct functions. For example, the _domains_ category generally require selection of a domain to perform the action on, which also means a queue could be established for bulk editing. But other categories, such as _billing_ or _storage_, there's no need.
+sub chooseAction {
+    # only work with links for now. Easier!
+    # my ( %forms ) = &findForms();
+    my ( @links ) = &findElements( 'a', ( href => qr/$currentTaskTree.*&next_step=/ ) );
+    my %links = map { $_->content_list() => $_->attr( 'href' ) } @links;
+
+    &displayOptions(keys %links );
+    my $choice = &getUserInput( 'Which action?' );
+    my $action = &selectOption($choice);
+
+    # Set globals
+    $currentActionText = $choice;
+    $currentActionUrl  = $links{$action};
+
+    # Fetch page and set
+    say 'loading form…';
+    my $response = &doGet( $currentActionUrl );
+    &setCurrentPage( $response->content );
+
+}
+
+sub getActionForm {
+
+    my ( %forms )  = &findForms();
+    # Most forms don't have a name or id, so `findForms()` gives it
+    # the name `form`+ incrementor. Need to make sure this works for
+    # all pages rather than hardcoding and hoping though
+    my ( %inputs ) = &findInputs( $forms{'form0'} );
+    foreach my $input ( keys %inputs ) {
+        if ( $input->attr( 'type' ) ne 'hidden' && $inputs{$input} eq '' ) {
+            $inputs{$input} = &getUserInput( $input );
+        } else {
+            $inputs{$input} = $input->attr( 'value
+    }
+
+
+    say $form->content_list();
+    print Dumper ($form->content_list());
+    exit;
+    d('');
+    my ( %inputs ) = &findInputs( $forms{'form0'} );
+
+}
+
+# This function has largely been abandoned but has some ideas which
+# may be used later
+# Display tasks available for $currentPage, read
+# selection, display available %domains to perform tasks on, read
+# selection @todo refactor this or use CLI::Framework instead. Too
+# procedural here.
 sub doTask {
     # Display available tasks
     map { 
@@ -371,7 +427,10 @@ sub doTask {
       }
     }
     # Add domain or dsid to url as appropriate Domain and DSID were
-    # stripped off when finding domains in loadOptions()
+    # stripped off when finding domains in loadOptionsJSON() This
+    # approach has been abandoned, but the idea is ok and will be
+    # reimplimented in the `choseAction()` function when dealing with
+    # the _domains_ category.
     $task_url .= $selected_domain                   if $task_url =~ /&domain=$/;
     $task_url .= $domains{$selected_domain}{'dsid'} if $task_url =~ /&dsid=$/;
 
@@ -399,6 +458,8 @@ sub main {
     &logIn();
     &loadOptions();
     &chooseTask();
+    &chooseAction();
+    &getActionForm();
     &doTask();
     &confirmExit();
 }
