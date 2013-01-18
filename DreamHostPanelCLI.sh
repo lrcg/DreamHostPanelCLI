@@ -47,19 +47,31 @@ my $LoggedIn = 0;
 # parsed DOM
 my $currentPage;
 
+# Selected task value from %task_categories
+my $currentTaskTree;
+# URL to request page for current task
+my $currentTaskUrl;
+
+my $currentActionText;
+my $currentActionUrl;
+
 # Hash of domains known to DH panel
 my %domains;
 
 # Hash of possible tasks to perform
 my %tasks;
 
+# Hash of available tasks derived from links in left column as
+# category->subcategory = tree parameter of URL
+# ex: https://panel.dreamhost.com/index.cgi?tree=billing.invoice& 
+# becomes: $task_categories{'billing'}{'invoice'} = 'billing.invoice'
 my %task_categories;
 
 # Hash of task links extracted from main Panel 
 my %task_links;
 
 # Hash of forms available on $currentPage for completion
-my %forms;
+# my %forms;
 
 # array of sorted options to display for user selection
 my @options;
@@ -132,14 +144,26 @@ sub findElements {
 
 # Find all available forms in $currentPage, basically a specific form
 # of findElements()
+
+#  Forms for actions seem to always have the class `fancyform` so this
+# can be used as a filter
+
+# @todo why are forms from previous pages staying in memory???
 sub findForms {
-    my ( @forms ) = &findElements( 'form' );
+    my $fancyforms_only = shift || 0;
+
+    my %attrs;
+    %attrs = ( class => 'fancyform' ) if $fancyforms_only;
+
+    my ( @forms ) = &findElements( 'form', %attrs );
     my %forms;
     my $form_name;
     my $i = 0;
     foreach my $form ( @forms ) {
         $form_name = $form->attr( 'name' ) || $form->attr( 'id' ) || 'form' . $i++;
+
         if ( $form_name ) {
+            # say $form_name;
             $forms{$form_name} = $form;
         }
     }
@@ -147,17 +171,27 @@ sub findForms {
 }
 
 # Finds all inputs of a $form object from findForms(), technically a
-# DOM fragment
+# DOM fragment returns a hash of (name => value) attributes for each
+# input @todo still need to find other forms of input such as
+# `<select>` and `<textarea>` and `<button>`
 sub findInputs {
     my ( $form ) = @_;
-    my %inputs;
-
+    # %inputs = hash of name => values extracted from @inputs
+    my %inputs = ( hidden => {}, visible => {} );
+    # @inputs = array of HTML::Elements
     my @inputs = $form->find_by_tag_name( 'input' );
+    my $i = 0;
     foreach my $input ( @inputs ) {
-        my $name  = $input->attr( 'name' );
+        # ignore submit buttons
+        my $type = $input->attr( 'type' ) || 0;
+        next if $type eq 'submit';
+        my $name  = $input->attr( 'name' ) || 'name' . $i++;
         my $value = $input->attr( 'value' );
-        if ( defined $name ) { 
-            $inputs{$name} = $value;
+
+        if ( $type eq 'hidden' ) { 
+            $inputs{'hidden'}{$name} = $value;
+        } else {
+            $inputs{'visible'}{$name} = $value;
         }
     }
     return ( %inputs );
@@ -178,15 +212,18 @@ sub selectOption {
 # Promts with /password/ will not echo user input
 # No echo behaviour can also be enabled by setting $private
 sub getUserInput {
-    my $prompt  = shift;
-    my $private = shift || 0;
+    my ( %prompt_data, $private ) = @_;
+    my $current_value  = $prompt_data{'value'};
+    my $prompt         = $prompt_data{'prompt'} || '';
+    # my $private        = shift || 0;
+    $private = 0 unless defined $private;
     
     if ( $prompt =~ /password/i || $private ) { 
         ReadMode( 'noecho' ); 
     } else { 
         ReadMode( 'normal' ); 
     }
-
+    say "Enter to accept current value: ($current_value)" if $current_value;
     print "$prompt: ";
 
     my $input = <STDIN>;
@@ -194,7 +231,41 @@ sub getUserInput {
     ReadMode( 'normal' );
     print "\n";
     chomp $input;
-    return $input;
+    # Return existing value if enter. There are probably other
+    # scenarios to cover.
+    if ( !$input && $current_value ) {
+        return $current_value;
+    } else {
+        return $input;
+    }
+}
+
+# Merge hidden and visible hashes into a one-dimensional hash to send
+# as POST data
+sub prepareInputsForPost {
+    my ( %inputs ) = @_;
+    my %preparedInputs;
+    foreach my $type ( keys %inputs ) {
+        foreach my $input ( keys $inputs{$type} ) {
+            $preparedInputs{$input} = $inputs{$type}{$input};
+        }
+    }
+    return ( %preparedInputs );
+}
+
+# Get input from user for visible inputs
+sub getInputValues {
+    my ( %inputs ) = @_;
+    # Prompt for credentials
+    foreach my $input ( keys $inputs{'visible'} ) {
+        $inputs{'visible'}{$input} = &getUserInput(
+            ( 
+              prompt => $input,
+              value  => $inputs{'visible'}{$input}
+            )
+        );
+    }
+    return ( %inputs );
 }
 
 # Gets cookie required for login and submits credentials of not
@@ -212,21 +283,20 @@ sub logIn {
     my ( %forms )  = &findForms();
 
     my ( %inputs ) = &findInputs( $forms{$loginFormName} );
-    # Prompt for credentials
-    foreach my $input ( keys %inputs ) {
-        if ( $inputs{$input} eq "" ) {
-            $inputs{$input} = &getUserInput( $input );
-        }
-    }
+
+    ( %inputs ) = getInputValues( %inputs );
 
     say 'Attempting to log in…';
 
+    $response = &doPost( 
+        $forms{$loginFormName}->attr('action' ), 
+        &prepareInputsForPost( %inputs ) 
+        );
     # Set panel as $currentPage
-    $response = &doPost( $forms{$loginFormName}->attr('action' ), %inputs);
     &setCurrentPage( $response->content );
 
     # Check for login failure indicated by <div class='caution'>
-    my ( @divs ) = &findElements( 'div', (class => 'caution' ));
+    my ( @divs ) = &findElements( 'div', ( class => 'caution' ) );
     if ( @divs ) {
         print "Login failed\n";
         exit;
@@ -302,42 +372,99 @@ sub loadOptions {
     say 'loading options…';
     my ( @links ) = &findElements( 'a', (href => qr/\?tree=[^=&]+&$/ ));
     foreach my $link (@links) {
-        # Extract category from link
-        # ex: https://panel.dreamhost.com/index.cgi?tree=domain.ftp&
+        # Extract category & task from link, see %task_categories comment
         ( my $href = $link->attr( 'href' ) )  =~ s/^.*tree=(.*)&/$1/g;
         ( my $category, my $sub_category ) = split /\./, $href;
 
         # $task_categories{$category} = '' unless $task_categories{$category};
 
         $task_categories{$category}{$sub_category} = $href;
-        # d( %task_categories, 0 );
     }
 }
 
 sub chooseTask {
     &displayOptions(keys %task_categories);
-    my $choice = &getUserInput( 'Which category?');
+    my $choice = &getUserInput( ( prompt => 'Which category?', value => '' ) );
     my $category = &selectOption($choice);
 
 
     &displayOptions(keys $task_categories{$category});
-    $choice = &getUserInput( 'Which task?');
+    $choice = &getUserInput( ( prompt => 'Which task?', value => '' ) );
     my $task = &selectOption($choice);
-    my $url =  $baseURL . 'index.cgi?tree=' . $task_categories{$category}{$task} . '&' ;
-    d( $url, 0 );
-
-    my $response = &doGet( $url );
+    # Update globals
+    $currentTaskTree = $task_categories{$category}{$task};
+    my $currentTaskUrl =  $baseURL . 'index.cgi?tree=' . $currentTaskTree . '&' ;
+    # Fetch page and set
+    say 'loading actions…';
+    my $response = &doGet( $currentTaskUrl );
     &setCurrentPage( $response->content );
-
-    my ( %forms ) = &findForms();
-    my ( @links ) = &findElements( 'a', ( href => qr/&next_step=/ ) );
-print Dumper (keys %forms, map { $_->attr( 'href' ) } @links );
-    d( '' );
 }
 
-# Display tasks available for $currentPage, read selection, display
-# available %domains to perform tasks on, read selection
-# @todo refactor this or use CLI::Framework instead. Too procedural here.
+# There are some idiosyncracies in tasks and forms, so may need some
+# distinct functions. For example, the _domains_ category generally
+# require selection of a domain to perform the action on, which also
+# means a queue could be established for bulk editing. But other
+# categories, such as _billing_ or _storage_, there's no need.
+sub chooseAction {
+    # only work with links for now. Easier!
+    # my ( %forms ) = &findForms();
+    my ( @links ) = &findElements( 'a', ( href => qr/$currentTaskTree.*&next_step=/ ) );
+    my %links = map { $_->content_list() => $_->attr( 'href' ) } @links;
+
+    &displayOptions(keys %links );
+    my $choice = &getUserInput( ( prompt => 'Which action?', value => '' ) );
+    my $action = &selectOption($choice);
+
+    # Set globals
+    $currentActionText = $choice;
+    $currentActionUrl  =  $baseURL . 'index.cgi' . $links{$action};
+
+    # Fetch page and set
+    say 'loading form…';
+    my $response = &doGet( $currentActionUrl );
+
+    &setCurrentPage( $response->content );
+
+}
+
+# Currently this function does more than just get a form for an
+# action. It gets input and submits it as well. Should focus on
+# refactoring this to deal with all basic forms.
+sub getActionForm {
+
+    my ( %forms )  = &findForms(1);
+    # Most forms don't have a name or id, so `findForms()` gives it
+    # the name `form`+ incrementor. Need to make sure this works for
+    # all pages rather than hardcoding and hoping though
+    my ( %inputs ) = &findInputs( $forms{'form1'} );
+
+    ( %inputs ) = getInputValues( %inputs );
+
+    say 'submitting form…';
+
+    my $response = &doPost( 
+        $baseURL . 'index.cgi' . $forms{'form1'}->attr( 'action' ), 
+        &prepareInputsForPost( %inputs ) 
+        );
+    # Set panel as $currentPage
+    &setCurrentPage( $response->content );
+
+    my ( @divs ) = &findElements( 'div', ( class => 'successbox_body' ) );
+    if (!@divs) {
+        say 'Action failed!';
+    } else {
+        say $divs[0]->as_text();
+    }
+
+    &confirmExit();
+}
+
+# This function has largely been abandoned but has some ideas which
+# may be used later
+# Display tasks available for $currentPage, read
+# selection, display available %domains to perform tasks on, read
+# selection @todo refactor this or use CLI::Framework instead. Too
+# procedural here.
 sub doTask {
     # Display available tasks
     map { 
@@ -371,7 +498,10 @@ sub doTask {
       }
     }
     # Add domain or dsid to url as appropriate Domain and DSID were
-    # stripped off when finding domains in loadOptions()
+    # stripped off when finding domains in loadOptionsJSON() This
+    # approach has been abandoned, but the idea is ok and will be
+    # reimplimented in the `choseAction()` function when dealing with
+    # the _domains_ category.
     $task_url .= $selected_domain                   if $task_url =~ /&domain=$/;
     $task_url .= $domains{$selected_domain}{'dsid'} if $task_url =~ /&dsid=$/;
 
@@ -390,7 +520,7 @@ sub doTask {
 # A way out.
 sub confirmExit{
     my $reallyExit = 0;
-    my $response   = &getUserInput( 'Finished? (y/n)' );
+    my $response   = &getUserInput( ( prompt => 'Finished? (y/n)', value => 'y' ) );
     exit unless $response =~ /n/i;
     main();
 }
@@ -399,7 +529,9 @@ sub main {
     &logIn();
     &loadOptions();
     &chooseTask();
-    &doTask();
+    &chooseAction();
+    &getActionForm();
+    # &doTask();
     &confirmExit();
 }
 
